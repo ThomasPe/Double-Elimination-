@@ -65,6 +65,30 @@ function slotText(m, s, i) {
   return { text: nm(p), pending: false };
 }
 
+// ---------- Tische ----------
+const tableCount = () => T.tableCount ?? 3;
+let tableOf = {}; // Spiel-ID -> Tischnummer, für die Anzeige in den Turnierbäumen
+
+// Ein Spiel bleibt an seinem Tisch, bis es entschieden ist.
+// Freie Tische bekommen das nächste spielbare Spiel (niedrigste Spielnummer zuerst).
+function computeTables(st) {
+  const n = tableCount();
+  const seen = new Set();
+  const tables = Array.from({ length: n }, (_, i) => {
+    const id = T.tables?.[i];
+    if (!id || seen.has(id) || !st[id]?.playable) return null;
+    seen.add(id);
+    return id;
+  });
+  const waiting = br.matches
+    .filter((m) => m.real && st[m.id].playable && !seen.has(m.id))
+    .sort((a, b) => a.no - b.no);
+  for (let i = 0; i < n; i++) if (!tables[i] && waiting.length) tables[i] = waiting.shift().id;
+  tableOf = {};
+  tables.forEach((id, i) => { if (id) tableOf[id] = i + 1; });
+  return { tables, waiting };
+}
+
 // ---------- Aktionen ----------
 function startTournament(form) {
   const name = form.name.value.trim() || "Turnier";
@@ -80,7 +104,8 @@ function startTournament(form) {
       [players[i], players[j]] = [players[j], players[i]];
     }
   }
-  T = { name, players, results: {}, history: [] };
+  const tableCount = Math.min(16, Math.max(1, parseInt(form.tables.value, 10) || 3));
+  T = { name, players, tableCount, tables: [], results: {}, history: [] };
   br = buildBracket(players.length);
   tab = "games";
   save();
@@ -99,18 +124,26 @@ function setWinner(id, winner) {
     const ok = confirm(`Damit ändern sich spätere Paarungen. ${removed.length === 1 ? "1 Ergebnis wird" : removed.length + " Ergebnisse werden"} gelöscht und muss neu eingetragen werden. Fortfahren?`);
     if (!ok) return;
   }
-  T.history.push(prev);
+  T.history.push({ results: prev, tables: T.tables ?? [] });
   if (T.history.length > 300) T.history.shift();
   T.results = results;
+  const table = tableOf[id];
   save();
   render();
   const m = br.byId[id];
-  toast(`${nm(winner)} gewinnt Spiel ${m.no}`, true);
+  const next = table && T.tables?.[table - 1];
+  toast(`${nm(winner)} gewinnt Spiel ${m.no}${next ? `. An Tisch ${table} folgt Spiel ${br.byId[next].no}` : ""}`, true);
 }
 
 function undo() {
   if (!T.history.length) return;
-  T.results = T.history.pop();
+  const h = T.history.pop();
+  if (h && h.results) {
+    T.results = h.results;
+    T.tables = h.tables;
+  } else {
+    T.results = h; // ältere Einträge enthielten nur die Ergebnisse
+  }
   save();
   render();
   toast("Letzte Eingabe zurückgenommen");
@@ -118,7 +151,7 @@ function undo() {
 
 function newTournament() {
   if (!confirm("Das aktuelle Turnier wird gelöscht. Neues Turnier anlegen?")) return;
-  draft = { name: T.name, players: T.players.join("\n"), shuffle: true };
+  draft = { name: T.name, players: T.players.join("\n"), shuffle: true, tables: tableCount() };
   T = null;
   br = null;
   save();
@@ -141,6 +174,11 @@ function render() {
   const real = br.matches.filter((m) => m.real);
   const played = real.filter((m) => st[m.id].winner !== null).length;
   const champ = st[br.final.id].winner;
+  const tb = computeTables(st);
+  if (JSON.stringify(tb.tables) !== JSON.stringify(T.tables)) {
+    T.tables = tb.tables;
+    save();
+  }
 
   const tabs = [
     ["games", "Spiele"],
@@ -170,7 +208,7 @@ function render() {
       </nav>
     </header>
     <main class="view view-${tab}">
-      ${tab === "games" ? viewGames(st, champ) : ""}
+      ${tab === "games" ? viewGames(st, champ, tb) : ""}
       ${tab === "W" ? viewBracket(st, "W") : ""}
       ${tab === "L" ? viewBracket(st, "L") : ""}
       ${tab === "rank" ? viewRank(st) : ""}
@@ -197,6 +235,10 @@ function renderSetup() {
           <span>Teilnehmer <em class="count"></em></span>
           <textarea name="players" rows="10" placeholder="Ein Name pro Zeile" spellcheck="false">${esc(draft.players)}</textarea>
         </label>
+        <label class="field field-inline">
+          <span>Anzahl Tische</span>
+          <input name="tables" type="number" inputmode="numeric" min="1" max="16" value="${esc(draft.tables ?? 3)}">
+        </label>
         <label class="check">
           <input type="checkbox" name="shuffle" ${draft.shuffle ? "checked" : ""}>
           <span>Setzliste auslosen
@@ -212,7 +254,7 @@ function renderSetup() {
   const upd = () => {
     const n = form.players.value.split("\n").filter((s) => s.trim()).length;
     count.textContent = n ? `${n} eingetragen` : "";
-    draft = { name: form.name.value, players: form.players.value, shuffle: form.shuffle.checked };
+    draft = { name: form.name.value, players: form.players.value, shuffle: form.shuffle.checked, tables: form.tables.value };
   };
   form.addEventListener("input", upd);
   upd();
@@ -222,9 +264,18 @@ function renderSetup() {
   });
 }
 
-function viewGames(st, champ) {
+function duelCard(m, st) {
+  const p = st[m.id].players;
+  return `<div class="card-meta"><b>Spiel ${m.no}</b><span>${roundName(m)}</span></div>
+    <div class="duel">
+      <button type="button" class="pick" data-win="${m.id}:${p[0]}">${nm(p[0])}</button>
+      <span class="vs">gegen</span>
+      <button type="button" class="pick" data-win="${m.id}:${p[1]}">${nm(p[1])}</button>
+    </div>`;
+}
+
+function viewGames(st, champ, tb) {
   const real = br.matches.filter((m) => m.real);
-  const open = real.filter((m) => st[m.id].playable).sort((a, b) => a.no - b.no);
   const next = real.filter((m) => !st[m.id].playable && st[m.id].winner === null).sort((a, b) => a.no - b.no);
   const done = real.filter((m) => st[m.id].winner !== null).sort((a, b) => b.no - a.no);
 
@@ -235,25 +286,46 @@ function viewGames(st, champ) {
       <strong>${nm(champ)}</strong>
       <button type="button" class="ghost" data-tab="rank">Rangliste ansehen</button>
     </section>`;
-  }
-  if (open.length) {
+  } else {
+    const n = tableCount();
     html += `<section class="block">
-      <h2>Jetzt spielen <span class="n">${open.length}</span></h2>
-      <p class="lead">Tippe auf den Namen des Siegers.</p>
+      <div class="block-head">
+        <h2>Tische</h2>
+        <div class="stepper" role="group" aria-label="Anzahl Tische">
+          <button type="button" data-act="tables-minus" ${n <= 1 ? "disabled" : ""} aria-label="Ein Tisch weniger">−</button>
+          <span>${n} ${n === 1 ? "Tisch" : "Tische"}</span>
+          <button type="button" data-act="tables-plus" ${n >= 16 ? "disabled" : ""} aria-label="Ein Tisch mehr">+</button>
+        </div>
+      </div>
+      <p class="lead">Tippe auf den Namen des Siegers. Danach rückt an diesem Tisch automatisch das nächste Spiel nach.</p>
       <div class="cards">
-        ${open.map((m) => {
-          const p = st[m.id].players;
-          return `<article class="card b-${m.bracket}">
-            <div class="card-meta"><b>Spiel ${m.no}</b><span>${roundName(m)}</span></div>
-            <div class="duel">
-              <button type="button" class="pick" data-win="${m.id}:${p[0]}">${nm(p[0])}</button>
-              <span class="vs">gegen</span>
-              <button type="button" class="pick" data-win="${m.id}:${p[1]}">${nm(p[1])}</button>
-            </div>
+        ${tb.tables.map((id, i) => {
+          if (!id) {
+            return `<article class="card table-card is-free">
+              <p class="table-no">Tisch ${i + 1}</p>
+              <p class="free">Frei. Das nächste Spiel wartet noch auf Ergebnisse.</p>
+            </article>`;
+          }
+          const m = br.byId[id];
+          return `<article class="card table-card b-${m.bracket}">
+            <p class="table-no">Tisch ${i + 1}</p>
+            ${duelCard(m, st)}
           </article>`;
         }).join("")}
       </div>
     </section>`;
+    if (tb.waiting.length) {
+      html += `<section class="block">
+        <h2>Wartet auf einen Tisch <span class="n">${tb.waiting.length}</span></h2>
+        <p class="lead">Kommt an den nächsten frei werdenden Tisch, in dieser Reihenfolge.</p>
+        <div class="cards">
+          ${tb.waiting.map((m, i) => `<article class="card b-${m.bracket} waiting">
+            <p class="queue-no">${i === 0 ? "Als Nächstes" : `${i + 1}. in der Warteschlange`}</p>
+            ${duelCard(m, st)}
+          </article>`).join("")}
+        </div>
+      </section>`;
+    }
   }
   if (next.length) {
     html += `<section class="block">
@@ -304,7 +376,8 @@ function matchCard(m, st, readonly = false) {
     return `<div class="slot ${cls}" data-slot="${i}">${t.text}</div>`;
   }).join("");
   const state = s.winner !== null ? "is-done" : live ? "is-live" : "";
-  return `<div class="bm b-${m.bracket} ${state}" data-id="${m.id}"><div class="bm-no">Spiel ${m.no}</div>${rows}</div>`;
+  const table = s.playable && tableOf[m.id] ? `<span class="tb">Tisch ${tableOf[m.id]}</span>` : "";
+  return `<div class="bm b-${m.bracket} ${state}" data-id="${m.id}"><div class="bm-no">Spiel ${m.no}${table}</div>${rows}</div>`;
 }
 
 function bracketHTML(st, which, readonly = false) {
@@ -355,15 +428,40 @@ function renderBeamer() {
   }
   const { st } = resolve(br, T.results);
   const champ = st[br.final.id].winner;
-  const open = br.matches.filter((m) => m.real && st[m.id].playable).sort((a, b) => a.no - b.no);
+  const tb = computeTables(st);
+  let tablesHtml = "";
+  if (champ === null) {
+    // Als Nächstes: zuerst spielbare Spiele ohne Tisch, dann Spiele, die noch auf Ergebnisse warten
+    const upcoming = [
+      ...tb.waiting,
+      ...br.matches
+        .filter((m) => m.real && !st[m.id].playable && st[m.id].winner === null)
+        .sort((a, b) => a.no - b.no),
+    ].slice(0, 3);
+    tablesHtml = `<div class="b-tables" style="--n:${tb.tables.length}">
+      ${tb.tables.map((id, i) => {
+        if (!id) return `<div class="tbl is-free"><span class="tn">Tisch ${i + 1}</span><span class="tf">frei</span></div>`;
+        const m = br.byId[id];
+        const p = st[id].players;
+        return `<div class="tbl b-${m.bracket}">
+          <span class="tn">Tisch ${i + 1}</span>
+          <strong>${nm(p[0])}</strong><i>gegen</i><strong>${nm(p[1])}</strong>
+          <em>Spiel ${m.no}, ${roundName(m)}</em>
+        </div>`;
+      }).join("")}
+      ${upcoming.length ? `<div class="tbl-next">
+        <span class="tn">Als Nächstes</span>
+        ${upcoming.map((m) => {
+          const s = st[m.id];
+          const a = slotText(m, s, 0), b = slotText(m, s, 1);
+          return `<p class="b-${m.bracket}"><em>Spiel ${m.no}</em><span class="${a.pending ? "tbd" : ""}">${a.text}</span> <i>gegen</i> <span class="${b.pending ? "tbd" : ""}">${b.text}</span></p>`;
+        }).join("")}
+      </div>` : ""}
+    </div>`;
+  }
   const now = champ !== null
     ? `<div class="b-champ"><span>Turniersieger</span><strong>${nm(champ)}</strong></div>`
-    : open.length
-      ? `<div class="b-now"><span class="b-now-t">Jetzt</span>${open.slice(0, 4).map((m) => {
-          const p = st[m.id].players;
-          return `<span class="chip b-${m.bracket}"><em>Spiel ${m.no}</em>${nm(p[0])} <i>gegen</i> ${nm(p[1])}</span>`;
-        }).join("")}${open.length > 4 ? `<span class="chip more">+${open.length - 4}</span>` : ""}</div>`
-      : "";
+    : "";
   $app.innerHTML = `
     <div class="stage">
       <header class="b-head">
@@ -371,6 +469,7 @@ function renderBeamer() {
         <div class="b-title"><p class="club">${CLUB}</p><h1>${esc(T.name)}</h1></div>
         ${now}
       </header>
+      ${tablesHtml}
       <div class="b-body">
         <section class="b-sec sec-W"><h2>Winner-Bracket</h2>${bracketHTML(st, "W", true)}</section>
         <section class="b-sec sec-L"><h2>Loser-Bracket</h2>${bracketHTML(st, "L", true)}</section>
@@ -508,6 +607,12 @@ document.addEventListener("click", (e) => {
     undo();
   }
   if (t.dataset.act === "new") newTournament();
+  if (t.dataset.act === "tables-minus" || t.dataset.act === "tables-plus") {
+    const d = t.dataset.act === "tables-plus" ? 1 : -1;
+    T.tableCount = Math.min(16, Math.max(1, tableCount() + d));
+    save();
+    render();
+  }
   if (t.dataset.act === "beamer") window.open(`${location.pathname}?beamer`, "turnier-beamer");
   if (t.dataset.act === "fs") {
     if (document.fullscreenElement) document.exitFullscreen?.();
