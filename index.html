@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Turnier – Burschenschaft Wangen</title>
+  <meta name="description" content="Double-Elimination-Turnier im Browser verwalten: Teilnehmer eintragen, Sieger antippen, Brackets ansehen.">
+  <meta name="theme-color" content="#eef1f5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121822" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 6h8v8h6M4 18h8v8h6M18 10v12h10' fill='none' stroke='%231c6fb8' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <pattern id="ringel" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-32)">
+        <rect width="9" height="9" fill="#ffffff"/>
+        <rect width="9" height="4.5" fill="#1c6fb8"/>
+      </pattern>
+    </defs>
+    <symbol id="maibaum" viewBox="0 0 48 120">
+      <path d="M24 2 L31 16 H17 Z" fill="#2e7a4e"/>
+      <rect x="20" y="14" width="8" height="104" rx="3" fill="url(#ringel)" stroke="#0f2340" stroke-width="1.2"/>
+      <ellipse cx="24" cy="32" rx="16" ry="5" fill="none" stroke="#2e7a4e" stroke-width="3.5"/>
+      <path d="M10 33 v9 M38 33 v9 M17 36 v8 M31 36 v8" stroke="#2e7a4e" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M8 58 H40 M10 78 H38" stroke="#0f2340" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+  </svg>
+  <div id="app"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
